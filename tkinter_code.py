@@ -1,448 +1,387 @@
 # -*- coding: utf-8 -*-
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from tkinter import scrolledtext
-import os
-import subprocess
-import sys
-import threading
+import os, sys
 from pathlib import Path
-from datetime import datetime
-import tkinter.font as tkFont
 
-APP_DIR = Path(__file__).parent
+def _app_dir() -> Path:
+    # exe로 실행 중이면 exe가 있는 폴더, 아니면 현재 파일 폴더
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
 
-style = ttk.Style()
-FONT_FAMILY = "Segoe UI"
-FONTS = {
-    "title": (FONT_FAMILY, 18, "bold"),
-    "header": (FONT_FAMILY, 14, "bold"),
-    "section": (FONT_FAMILY, 12, "bold"),
-    "body": (FONT_FAMILY, 10),
-    "nav": (FONT_FAMILY, 10, "bold"),
-    "mono": ("Consolas", 9),
-}
+APP_DIR = _app_dir()
 
-COLORS = {
-    "bg": "#99B0DA",
-    "panel": "#F5F5F5",
-    "nav_bg": "#B2E7E9",
-    "accent": "#2F3A4A",
-    "accent_soft": "#3791F8",
-    "log_bg": "#CCD1D6",
-    "log_fg": "#DADDE2",
-}
+# ✅ 배포 폴더 안의 "pw-browserst"를 브라우저 저장소로 강제
+BROWSERS_DIR = APP_DIR / "pw-browsers"
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(BROWSERS_DIR)
 
-MENU_ITEMS = [
-    ("홈", "home"),
-    ("Fwee 송장번호 크롤링", "fwee"),
-    ("Numbuzin 송장번호 크롤링", "numbuzin"),
-    ("FM Fwee 크롤링", "fm_fwee"),
-    ("FM Numbuzin 크롤링", "fm_numbuzin"),
-]
+# (선택) 실행 중에 다운로드 시도하지 말라고(오프라인 환경에서 유용)
+os.environ["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] = "1"
 
-SESSION_LABELS = {
-    "fwee": "Fwee",
-    "numbuzin": "Numbuzin",
-}
+import tkinter as tk
+from tkinter import ttk, messagebox
+import threading
+import queue
+from dataclasses import dataclass
+from dotenv import load_dotenv
+import os
+import inspect
 
-OPTIONS_FULL = ["Singapore", "Malaysia", "Thailand", "Philippines", "Vietnam", "Taiwan Xiapi"]
-OPTIONS_NUMBUZIN = ["Singapore", "Malaysia", "Philippines", "Vietnam", "Taiwan Xiapi"]
+from fwee_auth_login_once import run_login_once as fwee_login
+from numbuzin_auth_login_once import run_login_once as num_login
+from FM_fwee_crawling import run as fwee_run, FWEE_COUNTRYLIST
+from FM_numbuzin_crawling import run as num_run, NUM_COUNTRYLIST
+
+load_dotenv()
+
+LOGIN_ID = os.getenv("TKINT_ID") or "admin"
+LOGIN_PW = os.getenv("TKINT_PW") or "admin123"
+
+
+@dataclass
+class AppState:
+    # 로그인 결과(json 파일명) 보관용 (크롤링에 쓰지 않더라도 “로그인 됨” 표시 가능)
+    fwee_state_json: str | None = None
+    numbuzin_state_json: str | None = None
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
+        # 첫 로그인 화면
         self.title("Shopee 송장번호 자동화 프로그램")
-        self.geometry("980x720")
-        self.minsize(900, 640)
+        self.geometry("1100x720")
+        self.minsize(1000, 650)
 
-        self.logged_in = False
-        self.session_procs = {}
-        self.session_status = {}
-        self.output_dir = tk.StringVar(value=str(APP_DIR))
+        self.state = AppState()
+        self.logq = queue.Queue()
+        self.current_menu = tk.StringVar(value="홈")
 
-        self._setup_style()
-        self._build_login()
+        self._build_login_ui()
+        self.after(100, self._drain_logq)
 
-    def _setup_style(self):
-        self.configure(bg=COLORS["bg"])
-        style = ttk.Style(self)
+    # ------------------ 공통: 로그 ------------------
+    def log(self, msg: str):
+        self.logq.put(msg if msg.endswith("\n") else msg + "\n")
+    
+    # 로그를 화면에 계속 뿌려주는 반복 함수
+    def _drain_logq(self):
         try:
-            style.theme_use("clam")
-        except tk.TclError:
+            while True:
+                msg = self.logq.get_nowait()
+                if hasattr(self, "log_text"):
+                    self.log_text.insert("end", msg)
+                    self.log_text.see("end")
+        except queue.Empty:
             pass
+        self.after(100, self._drain_logq)
 
-        style.configure("App.TFrame", background=COLORS["bg"])
-        style.configure("Panel.TFrame", background=COLORS["panel"], relief="solid", borderwidth=1)
-        style.configure("Nav.TFrame", background=COLORS["nav_bg"])
-        style.configure("Title.TLabel", background=COLORS["bg"], foreground=COLORS["accent"], font=FONTS["title"])
-        style.configure("Header.TLabel", background=COLORS["bg"], foreground=COLORS["accent"], font=FONTS["header"])
-        style.configure("Section.TLabel", background=COLORS["panel"], foreground=COLORS["accent"], font=FONTS["section"])
-        style.configure("Body.TLabel", background=COLORS["panel"], foreground=COLORS["accent_soft"], font=FONTS["body"])
-        style.configure("Muted.TLabel", background=COLORS["panel"], foreground=COLORS["accent_soft"], font=FONTS["body"])
-        style.configure("TButton", font=FONTS["body"], padding=(8, 4))
-        style.configure("TLabelframe", background=COLORS["panel"], foreground=COLORS["accent"], borderwidth=1)
-        style.configure("TLabelframe.Label", background=COLORS["panel"], foreground=COLORS["accent"], font=FONTS["section"])
+    # 하단 로그 박스
+    def _build_log_box(self, parent):
+        box = ttk.LabelFrame(parent, text="실행 로그", padding=10)
+        box.pack(fill="both", expand=True, pady=10)
 
-    def _clear(self):
-        for widget in self.winfo_children():
-            widget.destroy()
+        self.log_text = tk.Text(box, height=18, wrap="word")
+        self.log_text.pack(fill="both", expand=True)
 
-    def _build_login(self):
-        self._clear()
+        btns = ttk.Frame(parent)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="로그 지우기", command=lambda: self.log_text.delete("1.0", "end")).pack(side="left")
 
-        root = ttk.Frame(self, style="App.TFrame", padding=24)
+    # ------------------ 로그인 UI ------------------
+    def _clear_root(self):
+        for w in self.winfo_children():
+            w.destroy()
+
+    def _build_login_ui(self):
+        self._clear_root()
+        wrapper = ttk.Frame(self, padding=30)
+        wrapper.pack(fill="both", expand=True)
+
+        ttk.Label(wrapper, text="로그인", font=("Segoe UI", 18, "bold")).pack(pady=(0, 20))
+
+        form = ttk.Frame(wrapper)
+        form.pack()
+
+        ttk.Label(form, text="아이디").grid(row=0, column=0, sticky="e", padx=8, pady=8)
+        self.id_entry = ttk.Entry(form, width=30)
+        self.id_entry.grid(row=0, column=1, padx=8, pady=8)
+
+        ttk.Label(form, text="비밀번호").grid(row=1, column=0, sticky="e", padx=8, pady=8)
+        self.pw_entry = ttk.Entry(form, width=30, show="*")
+        self.pw_entry.grid(row=1, column=1, padx=8, pady=8)
+
+        ttk.Button(wrapper, text="로그인", command=self._handle_login).pack(pady=18)
+        self.id_entry.focus_set()
+
+    def _handle_login(self):
+        uid = self.id_entry.get().strip()
+        pw = self.pw_entry.get().strip()
+        if uid == LOGIN_ID and pw == LOGIN_PW:
+            messagebox.showinfo("성공", "로그인 성공!")
+            self._build_main_ui()
+        else:
+            messagebox.showerror("실패", "아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    # ------------------ 메인 UI ------------------
+    def _build_main_ui(self):
+        self._clear_root()
+        root = ttk.Frame(self)
         root.pack(fill="both", expand=True)
 
-        ttk.Label(root, text="Shopee 송장번호 자동화 프로그램", style="Title.TLabel").pack(anchor="w")
-        ttk.Label(root, text="세션 관리와 송장 크롤링을 한 화면에서", style="Header.TLabel").pack(anchor="w", pady=(4, 18))
-
-        card = ttk.Frame(root, style="Panel.TFrame", padding=24)
-        card.pack(anchor="center", pady=10)
-
-        ttk.Label(card, text="로그인", style="Section.TLabel").grid(row=0, column=0, columnspan=2, pady=(0, 12))
-
-        ttk.Label(card, text="아이디", style="Body.TLabel").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=6)
-        ttk.Label(card, text="비밀번호", style="Body.TLabel").grid(row=2, column=0, sticky="e", padx=(0, 8), pady=6)
-
-        self.id_var = tk.StringVar()
-        self.pw_var = tk.StringVar()
-
-        id_entry = ttk.Entry(card, textvariable=self.id_var, width=28)
-        pw_entry = ttk.Entry(card, textvariable=self.pw_var, width=28, show="*")
-        id_entry.grid(row=1, column=1, pady=6)
-        pw_entry.grid(row=2, column=1, pady=6)
-
-        login_btn = ttk.Button(card, text="로그인", command=self._login)
-        login_btn.grid(row=3, column=0, columnspan=2, pady=(12, 0))
-
-        id_entry.focus()
-
-    def _login(self):
-        if self.id_var.get() == "admin" and self.pw_var.get() == "admin123":
-            self.logged_in = True
-            self._build_main()
-        else:
-            messagebox.showerror("로그인 실패", "아이디 또는 비밀번호가 올바르지 않습니다.")
-
-    def _logout(self):
-        self.logged_in = False
-        self._build_login()
-
-    def _build_main(self):
-        self._clear()
-
-        top = ttk.Frame(self, style="App.TFrame", padding=(16, 14, 16, 8))
-        top.pack(fill="x")
-
-        ttk.Label(top, text="Shopee 송장번호 자동화 프로그램", style="Header.TLabel").pack(side="left")
-        ttk.Button(top, text="로그아웃", command=self._logout).pack(side="right")
-
-        mid = ttk.Frame(self, style="App.TFrame", padding=(16, 6, 16, 0))
-        mid.pack(fill="both", expand=True)
-
-        nav = ttk.Frame(mid, style="Nav.TFrame", padding=8)
+        # 좌측 메뉴
+        nav = ttk.Frame(root, padding=12)
         nav.pack(side="left", fill="y")
 
-        content_wrap = ttk.Frame(mid, style="App.TFrame")
-        content_wrap.pack(side="left", fill="both", expand=True, padx=(12, 0))
+        ttk.Label(nav, text="Menu", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
 
-        settings = ttk.Frame(content_wrap, style="Panel.TFrame", padding=12)
-        settings.pack(fill="x")
-        self._build_path_selector(settings)
+        menus = ["홈", "Fwee 송장번호 크롤링", "Numbuzin 송장번호 크롤링", "FM Fwee 크롤링", "FM Numbuzin 크롤링"]
+        for m in menus:
+            ttk.Radiobutton(
+                nav, text=m, variable=self.current_menu, value=m, command=self._render_content
+            ).pack(anchor="w", pady=4)
 
-        pages = ttk.Frame(content_wrap, style="App.TFrame")
-        pages.pack(fill="both", expand=True, pady=(12, 0))
+        ttk.Separator(nav).pack(fill="x", pady=12)
 
-        self.menu_list = tk.Listbox(
-            nav,
-            exportselection=False,
-            height=len(MENU_ITEMS),
-            width=24,
-            bg=COLORS["nav_bg"],
-            fg=COLORS["accent"],
-            selectbackground=COLORS["accent"],
-            selectforeground="#FFFFFF",
-            font=FONTS["nav"],
-            highlightthickness=0,
-            bd=0,
-        )
-        for label, _ in MENU_ITEMS:
-            self.menu_list.insert(tk.END, label)
-        self.menu_list.pack(fill="y")
-        self.menu_list.bind("<<ListboxSelect>>", self._on_menu_select)
+        ttk.Button(nav, text="로그아웃", command=self._logout).pack(fill="x", pady=(0, 6))
+        ttk.Button(nav, text="로그인정보 초기화", command=self._clear_login_info).pack(fill="x")
 
-        self.frames = {}
-        for _, key in MENU_ITEMS:
-            frame = ttk.Frame(pages, style="App.TFrame")
-            frame.place(relx=0, rely=0, relwidth=1, relheight=1)
-            self.frames[key] = frame
+        # 우측 콘텐츠
+        self.content = ttk.Frame(root, padding=16)
+        self.content.pack(side="left", fill="both", expand=True)
 
-        self._build_home(self.frames["home"])
-        self._build_fwee(self.frames["fwee"])
-        self._build_numbuzin(self.frames["numbuzin"])
-        self._build_fm_fwee(self.frames["fm_fwee"])
-        self._build_fm_numbuzin(self.frames["fm_numbuzin"])
+        self._render_content()
 
-        self.menu_list.selection_set(0)
-        self._show_frame("home")
+    def _logout(self):
+        self._clear_login_info()
+        messagebox.showinfo("안내", "로그아웃 되었습니다.")
+        self._build_login_ui()
 
-        log_wrap = ttk.Frame(self, style="App.TFrame", padding=(16, 8, 16, 16))
-        log_wrap.pack(fill="x")
+    def _clear_login_info(self):
+        self.state.fwee_state_json = None
+        self.state.numbuzin_state_json = None
+        self.log("🧹 저장된 로그인(json) 정보 초기화 완료")
 
-        log_panel = ttk.Frame(log_wrap, style="Panel.TFrame", padding=10)
-        log_panel.pack(fill="x")
+    # ------------------ 페이지 렌더 ------------------
+    def _render_content(self):
+        for w in self.content.winfo_children():
+            w.destroy()
 
-        header = ttk.Frame(log_panel, style="Panel.TFrame")
-        header.pack(fill="x")
-        ttk.Label(header, text="실행 로그", style="Section.TLabel").pack(side="left")
-        ttk.Button(header, text="로그 지우기", command=self._clear_log).pack(side="right")
+        menu = self.current_menu.get()
 
-        self.log_text = scrolledtext.ScrolledText(
-            log_panel,
-            height=8,
-            wrap="word",
-            font=FONTS["mono"],
-            bg=COLORS["log_bg"],
-            fg=COLORS["log_fg"],
-            insertbackground=COLORS["accent"],
-            relief="flat",
-        )
-        self.log_text.pack(fill="x", pady=(8, 0))
-        self.log_text.configure(state="disabled")
+        ttk.Label(self.content, text=menu, font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Separator(self.content).pack(fill="x", pady=10)
 
-        self._append_log("앱이 시작되었습니다.")
-
-    def _on_menu_select(self, _event):
-        selection = self.menu_list.curselection()
-        if not selection:
-            return
-        _, key = MENU_ITEMS[selection[0]]
-        self._show_frame(key)
-
-    def _show_frame(self, key):
-        frame = self.frames.get(key)
-        if frame:
-            frame.tkraise()
-
-    def _build_home(self, parent):
-        card = ttk.Frame(parent, style="Panel.TFrame", padding=18)
-        card.pack(fill="both", expand=False)
-        ttk.Label(card, text="홈", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(card, text="Shopee 송장번호 자동화 프로그램에 오신 것을 환영합니다.", style="Body.TLabel").pack(anchor="w", pady=(6, 0))
-
-    def _build_path_selector(self, parent):
-        ttk.Label(parent, text="저장 경로", style="Section.TLabel").pack(anchor="w")
-
-        row = ttk.Frame(parent, style="Panel.TFrame")
-        row.pack(fill="x", pady=(6, 0))
-
-        entry = ttk.Entry(row, textvariable=self.output_dir, width=70)
-        entry.pack(side="left", fill="x", expand=True)
-
-        ttk.Button(row, text="폴더 선택", command=self._choose_output_dir).pack(side="left", padx=(8, 0))
-
-        note = ttk.Label(parent, text="선택한 경로는 OUTPUT_DIR 환경변수로 전달됩니다.", style="Muted.TLabel")
-        note.pack(anchor="w", pady=(6, 0))
-
-    def _choose_output_dir(self):
-        initial = self.output_dir.get() or str(APP_DIR)
-        path = filedialog.askdirectory(title="저장 폴더 선택", initialdir=initial)
-        if path:
-            self.output_dir.set(path)
-            self._log(f"저장 경로 변경: {path}")
-
-    def _build_auth_section(self, parent, session_key, script_name):
-        auth = ttk.LabelFrame(parent, text="로그인 세션", padding=12)
-        auth.pack(fill="x", pady=(12, 10))
-
-        ttk.Label(auth, text="'로그인 세션' 버튼 클릭 -> 인증코드 입력 -> 반드시 '확인' 버튼 클릭", style="Body.TLabel").pack(anchor="w", pady=(0, 4))
-        ttk.Label(auth, text="30초 정도 대기 후 진행하세요.", style="Body.TLabel").pack(anchor="w", pady=(0, 10))
-
-        status_var = tk.StringVar(value="대기 중")
-        self.session_status[session_key] = status_var
-        ttk.Label(auth, textvariable=status_var, style="Muted.TLabel").pack(anchor="w", pady=(0, 8))
-
-        btn_frame = ttk.Frame(auth, style="Panel.TFrame")
-        btn_frame.pack(fill="x", pady=(0, 8))
-
-        ttk.Button(
-            btn_frame,
-            text=f"{SESSION_LABELS.get(session_key, session_key)} 로그인 세션 시작",
-            command=lambda: self._start_session(session_key, script_name),
-        ).pack(side="left")
-
-        code_frame = ttk.Frame(auth, style="Panel.TFrame")
-        code_frame.pack(fill="x")
-
-        ttk.Label(code_frame, text="인증코드", style="Body.TLabel").pack(side="left")
-        code_var = tk.StringVar()
-        code_entry = ttk.Entry(code_frame, textvariable=code_var, width=24)
-        code_entry.pack(side="left", padx=(8, 8))
-        ttk.Button(
-            code_frame,
-            text="확인",
-            command=lambda: self._submit_code(session_key, code_var.get()),
-        ).pack(side="left")
-
-    def _build_country_section(self, parent, options, script_name, label):
-        box = ttk.LabelFrame(parent, text="나라 선택", padding=12)
-        box.pack(fill="x", pady=(6, 0))
-
-        ttk.Label(box, text="나라를 선택하세요:", style="Body.TLabel").pack(anchor="w", pady=(0, 6))
-        listbox = tk.Listbox(
-            box,
-            selectmode=tk.MULTIPLE,
-            height=min(8, len(options)),
-            bg="#FFFFFF",
-            fg=COLORS["accent"],
-            selectbackground=COLORS["accent"],
-            selectforeground="#FFFFFF",
-            relief="solid",
-            bd=1,
-        )
-        for option in options:
-            listbox.insert(tk.END, option)
-        listbox.pack(fill="x", pady=(0, 8))
-
-        ttk.Button(box, text="크롤링 시작", command=lambda: self._run_crawling(script_name, listbox, label)).pack()
-
-    def _build_fwee(self, parent):
-        ttk.Label(parent, text="Fwee 송장번호 크롤링", style="Header.TLabel").pack(anchor="w")
-        self._build_auth_section(parent, "fwee", "fwee_auth_login_once.py")
-        self._build_country_section(parent, OPTIONS_FULL, "fwee_crawling.py", "Fwee 크롤링")
-
-    def _build_numbuzin(self, parent):
-        ttk.Label(parent, text="Numbuzin 송장번호 크롤링", style="Header.TLabel").pack(anchor="w")
-        self._build_auth_section(parent, "numbuzin", "numbuzin_auth_login_once.py")
-        self._build_country_section(parent, OPTIONS_NUMBUZIN, "numbuzin_crawling.py", "Numbuzin 크롤링")
-
-    def _build_fm_fwee(self, parent):
-        ttk.Label(parent, text="FM Fwee 크롤링", style="Header.TLabel").pack(anchor="w")
-        self._build_country_section(parent, OPTIONS_FULL, "FM_fwee_crawling.py", "FM Fwee 크롤링")
-
-    def _build_fm_numbuzin(self, parent):
-        ttk.Label(parent, text="FM Numbuzin 크롤링", style="Header.TLabel").pack(anchor="w")
-        self._build_country_section(parent, OPTIONS_FULL, "FM_numbuzin_crawling.py", "FM Numbuzin 크롤링")
-
-    def _set_session_status(self, session_key, text):
-        var = self.session_status.get(session_key)
-        if var:
-            var.set(text)
-
-    def _start_session(self, session_key, script_name):
-        script_path = APP_DIR / script_name
-        proc = self.session_procs.get(session_key)
-        if proc and proc.poll() is None:
-            messagebox.showwarning("세션 실행 중", "이미 실행 중인 세션이 있습니다.")
+        if menu == "홈":
+            ttk.Label(self.content, text="좌측 메뉴에서 작업을 선택하세요.").pack(anchor="w")
+            self._build_log_box(self.content)
             return
 
-        try:
-            env = os.environ.copy()
-            if self.output_dir.get():
-                env["OUTPUT_DIR"] = self.output_dir.get()
-            proc = subprocess.Popen(
-                [sys.executable, str(script_path)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                cwd=script_path.parent,
-                env=env,
+        if menu == "Fwee 송장번호 크롤링":
+            self._page_auth_and_crawl(
+                brand="Fwee",
+                login_func=fwee_login,
+                run_func=fwee_run,                 # ✅ run(selected_countries) only
+                country_list=FWEE_COUNTRYLIST,
+                get_json=lambda: self.state.fwee_state_json,
+                set_json=lambda p: setattr(self.state, "fwee_state_json", p),
             )
-            self.session_procs[session_key] = proc
-            self._set_session_status(session_key, "실행 중")
-            self._log(f"{SESSION_LABELS.get(session_key, session_key)} 세션 시작됨.")
-            threading.Thread(
-                target=self._stream_process_output,
-                args=(proc, f"{SESSION_LABELS.get(session_key, session_key)} 세션", session_key),
-                daemon=True,
-            ).start()
-            messagebox.showinfo("세션 시작됨", "세션 시작됨. 인증코드 입력 후 확인하세요.")
-        except Exception as exc:
-            messagebox.showerror("실행 실패", str(exc))
-
-    def _submit_code(self, session_key, code):
-        proc = self.session_procs.get(session_key)
-        if not proc or proc.poll() is not None:
-            messagebox.showerror("오류", "실행 중인 세션이 없습니다.")
-            return
-        if not code.strip():
-            messagebox.showwarning("경고", "인증코드를 입력하세요.")
             return
 
-        try:
-            proc.stdin.write(code.strip() + "\n")
-            proc.stdin.flush()
-            self._log(f"{SESSION_LABELS.get(session_key, session_key)} 인증코드 전송")
-            messagebox.showinfo("인증 완료", "인증 완료")
-        except Exception as exc:
-            messagebox.showerror("오류", str(exc))
-
-    def _run_crawling(self, script_name, listbox, label):
-        selected = [listbox.get(i) for i in listbox.curselection()]
-        if not selected:
-            messagebox.showwarning("선택 필요", "나라를 선택하세요.")
+        if menu == "Numbuzin 송장번호 크롤링":
+            self._page_auth_and_crawl(
+                brand="Numbuzin",
+                login_func=num_login,
+                run_func=num_run,                  # ✅ run(selected_countries) only
+                country_list=NUM_COUNTRYLIST,
+                get_json=lambda: self.state.numbuzin_state_json,
+                set_json=lambda p: setattr(self.state, "numbuzin_state_json", p),
+            )
             return
 
-        script_path = APP_DIR / script_name
+        if menu == "FM Fwee 크롤링":
+            self._page_simple_crawl("FM Fwee", fwee_run, FWEE_COUNTRYLIST)
+            return
 
-        def worker():
-            self._log(f"{label} 시작: {', '.join(selected)}")
-            try:
-                env = os.environ.copy()
-                if self.output_dir.get():
-                    env["OUTPUT_DIR"] = self.output_dir.get()
-                proc = subprocess.Popen(
-                    [sys.executable, str(script_path), *selected],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    cwd=script_path.parent,
-                    env=env,
-                )
-                for line in proc.stdout:
-                    self._log(line.rstrip(), prefix=label)
-                code = proc.wait()
-                if code == 0:
-                    self.after(0, lambda: messagebox.showinfo("완료", "크롤링이 완료되었습니다."))
-                else:
-                    self.after(0, lambda: messagebox.showerror("오류", f"크롤링이 실패했습니다. 코드: {code}"))
-            except Exception as exc:
-                self.after(0, lambda: messagebox.showerror("오류", str(exc)))
+        if menu == "FM Numbuzin 크롤링":
+            self._page_simple_crawl("FM Numbuzin", num_run, NUM_COUNTRYLIST)
+            return
 
-        threading.Thread(target=worker, daemon=True).start()
+    # ------------------ 유틸: country_list가 dict/ list 둘 다 지원 ------------------
+    @staticmethod
+    def _country_keys(country_list):
+        if isinstance(country_list, dict):
+            return list(country_list.keys())
+        return list(country_list)
 
-    def _stream_process_output(self, proc, label, session_key=None):
-        for line in proc.stdout:
-            self._log(line.rstrip(), prefix=label)
-        if session_key:
-            self.after(0, lambda: self._set_session_status(session_key, "종료됨"))
-            self._log(f"{SESSION_LABELS.get(session_key, session_key)} 세션 종료")
+    # ------------------ 유틸: login_func가 code 인자를 받으면 넣고, 아니면 그냥 실행 ------------------
+    def _call_login(self, login_func, code: str | None):
+        code = (code or "").strip()
 
-    def _append_log(self, message, prefix=None):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        prefix_text = f"[{prefix}] " if prefix else ""
-        line = f"{timestamp} {prefix_text}{message}\n"
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", line)
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+        sig = inspect.signature(login_func)
+        params = sig.parameters
 
-    def _log(self, message, prefix=None):
-        self.after(0, lambda: self._append_log(message, prefix))
+        # 1) code라는 이름의 인자가 있으면: keyword로 넣기
+        if "code" in params:
+            return login_func(code=code)
 
-    def _clear_log(self):
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        self.log_text.configure(state="disabled")
+        # 2) *args/**kwargs 만 있는 경우: code 넣지 말고 그냥 호출
+        only_var = all(
+            p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+            for p in params.values()
+        )
+        if len(params) == 0 or only_var:
+            return login_func()
+
+        # 3) positional-only / positional-or-keyword가 1개만 있으면: 그 1개에 code 넣기
+        normal_params = [
+            p for p in params.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        if len(normal_params) == 1:
+            return login_func(code)
+
+        # 4) 그 외(파라미터 여러 개): code를 억지로 넣지 않고 그냥 호출
+        return login_func()
+
+    # ------------------ 페이지: 로그인(json 생성) + 크롤(run은 country만) ------------------
+    def _page_auth_and_crawl(self, brand, login_func, run_func, country_list, get_json, set_json):
+        guide = ttk.LabelFrame(self.content, text="사용 방법", padding=10)
+        guide.pack(fill="x")
+        for t in [
+            "1. '로그인 시작' 클릭 → 브라우저에서 인증코드 입력 화면까지 진행",
+            "2. 인증코드가 오면 입력 후 '인증코드 제출' 클릭",
+            "3. 로그인 완료되면 json(storage_state) 파일명이 저장됩니다.",
+            "4. 나라 선택 후 '크롤링 시작' 클릭",
+        ]:
+            ttk.Label(guide, text=t).pack(anchor="w")
+
+        # 로그인 상태 표시
+        status = ttk.LabelFrame(self.content, text="현재 로그인 상태", padding=10)
+        status.pack(fill="x", pady=10)
+        state_label = ttk.Label(status, text=f"storage_state: {get_json() or '없음'}")
+        state_label.pack(anchor="w")
+
+        # 인증코드 입력부
+        auth = ttk.LabelFrame(self.content, text="인증코드", padding=10)
+        auth.pack(fill="x", pady=10)
+
+        code_var = tk.StringVar()
+        ttk.Entry(auth, textvariable=code_var, width=40).pack(side="left")
+
+        hint = ttk.Label(auth, text="로그인 시작 후, 인증코드가 오면 입력하고 제출하세요.")
+        hint.pack(side="left", padx=10)
+
+        submit_btn = ttk.Button(auth, text="인증코드 제출")
+        submit_btn.pack(side="left", padx=8)
+        submit_btn.config(state="disabled")  # 로그인 시작 전에는 비활성화
+
+        row = ttk.Frame(self.content)
+        row.pack(fill="x", pady=10)
+
+        login_btn = ttk.Button(row, text="로그인 시작")
+        login_btn.pack(side="left")
+
+        # ✅ 스레드 대기용 Event/holder
+        code_event = threading.Event()
+        code_holder = {"code": ""}
+
+        def get_code_blocking() -> str:
+            """Playwright 로그인 스레드에서 호출됨. 사용자가 제출할 때까지 대기."""
+            self.after(0, lambda: hint.config(text="✅ 인증코드를 입력하고 '인증코드 제출'을 누르세요."))
+            code_event.clear()
+            code_event.wait()
+            return code_holder["code"]
+
+        def on_submit_code():
+            code = code_var.get().strip()
+            if not code:
+                messagebox.showwarning("안내", "인증코드를 입력하세요.")
+                return
+            code_holder["code"] = code
+            code_event.set()
+            self.log(f"🔐 [{brand}] 인증코드 제출됨")
+
+        submit_btn.config(command=on_submit_code)
+
+        def on_login():
+            def job():
+                try:
+                    self.log(f"✅ [{brand}] 로그인 시작... (인증코드 대기형)")
+                    self.after(0, lambda: (login_btn.config(state="disabled"),
+                                        submit_btn.config(state="normal"),
+                                        hint.config(text="브라우저에서 인증코드 입력 화면까지 진행 중...")))
+
+                    # ✅ 핵심: login_func에게 get_code_blocking 콜백을 넘김
+                    json_path = login_func(get_code_blocking)
+
+                    if not json_path:
+                        raise RuntimeError("login_func가 json 파일명을 반환하지 않았습니다.")
+
+                    set_json(str(json_path))
+                    self.log(f"✅ [{brand}] 로그인 완료: storage_state = {json_path}")
+
+                    def ui_done():
+                        state_label.config(text=f"storage_state: {get_json() or '없음'}")
+                        messagebox.showinfo("완료", f"{brand} 로그인 완료!\n\nstorage_state:\n{json_path}")
+                        hint.config(text="로그인 완료. 나라 선택 후 크롤링을 시작하세요.")
+                        login_btn.config(state="normal")
+                        submit_btn.config(state="disabled")
+
+                    self.after(0, ui_done)
+
+                except Exception as e:
+                    self.log(f"❌ [{brand}] 로그인 실패: {e}")
+
+                    def ui_err():
+                        messagebox.showerror("오류", f"{brand} 로그인 실패:\n{e}")
+                        hint.config(text="로그인 실패. 다시 '로그인 시작'을 눌러주세요.")
+                        login_btn.config(state="normal")
+                        submit_btn.config(state="disabled")
+
+                    self.after(0, ui_err)
+
+            threading.Thread(target=job, daemon=True).start()
+
+        login_btn.config(command=on_login)
+
+        self._build_log_box(self.content)
+
+    # ------------------ 페이지: FM 크롤 (run은 country만) ------------------
+    def _page_simple_crawl(self, brand, run_func, country_list):
+        guide = ttk.LabelFrame(self.content, text="사용 방법", padding=10)
+        guide.pack(fill="x")
+        ttk.Label(guide, text="1. 나라 선택 후 '크롤링 시작' 클릭").pack(anchor="w")
+
+        cbox = ttk.LabelFrame(self.content, text="나라 선택", padding=10)
+        cbox.pack(fill="x", pady=10)
+
+        country_vars = {}
+        for c in self._country_keys(country_list):
+            v = tk.BooleanVar(value=False)
+            country_vars[c] = v
+            ttk.Checkbutton(cbox, text=c, variable=v).pack(anchor="w")
+
+        def on_crawl():
+            selected = [c for c, v in country_vars.items() if v.get()]
+            if not selected:
+                messagebox.showwarning("안내", "나라를 1개 이상 선택하세요.")
+                return
+
+            def job():
+                try:
+                    self.log(f"🚀 [{brand}] 크롤링 시작: {', '.join(selected)}")
+                    run_func(selected)  # ✅ run은 country만 받음
+                    self.log(f"✅ [{brand}] 크롤링 완료")
+                    messagebox.showinfo("완료", f"{brand} 크롤링이 완료되었습니다.")
+                except Exception as e:
+                    self.log(f"❌ [{brand}] 크롤링 실패: {e}")
+                    messagebox.showerror("오류", f"{brand} 크롤링 실패:\n{e}")
+
+            threading.Thread(target=job, daemon=True).start()
+
+        ttk.Button(self.content, text="크롤링 시작", command=on_crawl).pack(anchor="w")
+        self._build_log_box(self.content)
 
 
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    App().mainloop()
