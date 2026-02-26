@@ -25,18 +25,23 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 import os
 import inspect
-
+# 인증 토큰
 from fwee_auth_login_once import run_login_once as fwee_login
 from numbuzin_auth_login_once import run_login_once as num_login
+# ----------------------------------------------
+# FM 라벨
 from FM_fwee_crawling import run as fwee_run, FWEE_COUNTRYLIST
 from FM_numbuzin_crawling import run as num_run, NUM_COUNTRYLIST
-
+# ---------------------------------------------
+# 송장번호
+from numbuzin_crawling import run as numbuzin_run, numbuzin_country
+from fwee_crawling import run as fw_run, fwee_countrylist
 load_dotenv()
 
 LOGIN_ID = os.getenv("TKINT_ID") or "admin"
 LOGIN_PW = os.getenv("TKINT_PW") or "admin123"
 
-
+# 데이터만 저장하는 클래스를 쉽게 만드는 것
 @dataclass
 class AppState:
     # 로그인 결과(json 파일명) 보관용 (크롤링에 쓰지 않더라도 “로그인 됨” 표시 가능)
@@ -134,7 +139,7 @@ class App(tk.Tk):
 
         ttk.Label(nav, text="Menu", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
 
-        menus = ["홈", "Fwee 송장번호 크롤링", "Numbuzin 송장번호 크롤링", "FM Fwee 크롤링", "FM Numbuzin 크롤링"]
+        menus = ["홈", "FWEE Shopee 로그인", "Numbuzin Shopee 로그인", "Fwee 송장번호 크롤링", "Numbuzin 송장번호 크롤링", "FM Fwee 크롤링", "FM Numbuzin 크롤링"]
         for m in menus:
             ttk.Radiobutton(
                 nav, text=m, variable=self.current_menu, value=m, command=self._render_content
@@ -176,7 +181,7 @@ class App(tk.Tk):
             self._build_log_box(self.content)
             return
 
-        if menu == "Fwee 송장번호 크롤링":
+        if menu == "FWEE Shopee 로그인":
             self._page_auth_and_crawl(
                 brand="Fwee",
                 login_func=fwee_login,
@@ -187,7 +192,7 @@ class App(tk.Tk):
             )
             return
 
-        if menu == "Numbuzin 송장번호 크롤링":
+        if menu == "Numbuzin Shopee 로그인":
             self._page_auth_and_crawl(
                 brand="Numbuzin",
                 login_func=num_login,
@@ -197,7 +202,14 @@ class App(tk.Tk):
                 set_json=lambda p: setattr(self.state, "numbuzin_state_json", p),
             )
             return
+        
+        if menu == "Fwee 송장번호 크롤링":
+            self._page_simple_crawl("Fwee 송장번호",fw_run,fwee_countrylist)
 
+        if menu == "Numbuzin 송장번호 크롤링":
+            self._page_simple_crawl("Numbuzin 송장번호", numbuzin_run, numbuzin_country)
+            return
+            
         if menu == "FM Fwee 크롤링":
             self._page_simple_crawl("FM Fwee", fwee_run, FWEE_COUNTRYLIST)
             return
@@ -251,7 +263,6 @@ class App(tk.Tk):
             "1. '로그인 시작' 클릭 → 브라우저에서 인증코드 입력 화면까지 진행",
             "2. 인증코드가 오면 입력 후 '인증코드 제출' 클릭",
             "3. 로그인 완료되면 json(storage_state) 파일명이 저장됩니다.",
-            "4. 나라 선택 후 '크롤링 시작' 클릭",
         ]:
             ttk.Label(guide, text=t).pack(anchor="w")
 
@@ -271,16 +282,17 @@ class App(tk.Tk):
         hint = ttk.Label(auth, text="로그인 시작 후, 인증코드가 오면 입력하고 제출하세요.")
         hint.pack(side="left", padx=10)
 
-        submit_btn = ttk.Button(auth, text="인증코드 제출")
-        submit_btn.pack(side="left", padx=8)
-        submit_btn.config(state="disabled")  # 로그인 시작 전에는 비활성화
-
+        # ✅ row를 먼저 만든다
         row = ttk.Frame(self.content)
         row.pack(fill="x", pady=10)
 
         login_btn = ttk.Button(row, text="로그인 시작")
         login_btn.pack(side="left")
 
+        submit_btn = ttk.Button(row, text="인증코드 제출")
+        submit_btn.pack(side="left", padx=8)
+        submit_btn.config(state="disabled")
+        
         # ✅ 스레드 대기용 Event/holder
         code_event = threading.Event()
         code_holder = {"code": ""}

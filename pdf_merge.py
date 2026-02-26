@@ -1,60 +1,50 @@
-# 전체 pdf를 merge 한 후에 1200개씩 잘라서 다시 저장하기 
-
 from PyPDF2 import PdfReader, PdfWriter
-import os
-from datetime import datetime
+from pathlib import Path
+import re
 
-KST = datetime.now().strftime("%Y%m%d")
 
-# 출력 확인 코드
-def print_result(name,name_cnt):
-    print(f"{name}_merged_{name_cnt}.pdf 생성 완료" )
-    
-# Build a merged PDF in chunks to cap output size.
-def pdf_merge(path):
-    file_list = sorted(os.listdir(path))
-    merger = PdfWriter()
-    name_cnt = 1
-    name = path.split("_")[0]
+def pdf_merge(folder_path:str, country:str, chunk_pages: int = 1200):
+    folder = Path(folder_path)
+    folder.mkdir(parents=True, exist_ok=True)
+
+    # numbuzin_{country}_YYYY_MM_DD_HHMMSS.pdf 에 맞는 것만
+    pattern = re.compile(rf"^NUMBUZIN_{re.escape(country)}_\d{{4}}_\d{{2}}_\d{{2}}_\d+\.pdf$", re.IGNORECASE)
+
+    pdfs = sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and pattern.match(p.name)])
+
+    if not pdfs:
+            print(f"[{country}] 병합할 PDF가 없습니다: {folder}")
+            return
+
+    writer = PdfWriter()
+    part = 1
     page_count = 0
-    # def write_chunk(writer,idx):
-    #     output_name = f"{name}_merged_output_{KST}_part{idx:03d}.pdf"
-    #     output_path = os.path.join(path, output_name)
-    #     with open(output_path,"wb") as output_pdf:
-    #         writer.write(output_pdf)
-    #     print(f"PDF merge complete: {output_path}")
 
-    for file in file_list:
-        file_path = os.path.join(path, file)
-        if file_path.endswith(".pdf"):
-            # Read PDF and append pages to current chunk.
-            with open(file_path, "rb") as f:
-                pdf_reader = PdfReader(f)
-                for page_num in range(len(pdf_reader.pages)):
-                    page = pdf_reader.pages[page_num]
-                    merger.add_page(page)
-                    page_count += 1
-                    if page_count % 1200 == 0:
-                        with open(os.path.join(path,f"{name}_merged_{name_cnt}.pdf"),"wb") as output_pdf :
-                            merger.write(output_pdf)
-                            print_result(name,name_cnt)
-                        name_cnt += 1
-                        merger = PdfWriter()
-                        page_count = 0
+    base_folder_name = folder.name  # 예: NUMBUZIN_2026_02_25
+
+    def flush():
+        nonlocal writer, part, page_count
+        out_path = folder / f"{base_folder_name}_{country}_merged_{part}.pdf"
+        with open(out_path, "wb") as f:
+            writer.write(f)
+        print(f"[{country}] 생성 완료: {out_path}")
+        part += 1
+        writer = PdfWriter()
+        page_count = 0
+
+    for pdf_path in pdfs:
+        reader = PdfReader(str(pdf_path))
+        for page in reader.pages:
+            writer.add_page(page)
+            page_count += 1
+            if page_count == chunk_pages:
+                flush()
 
     if page_count > 0:
-        out_path = os.path.join(path, f"{name}_merged_{name_cnt}.pdf")     
-        with open(out_path,"wb") as output_f:
-            merger.write(output_f)
-            print_result(name,name_cnt)
+        flush()
+    
+    return (f"{country}_병합 완료")
 
-
-    print("전체 PDF 병합 완료")
-
-pdf_merge("퓌_test_files")
-
-<<<<<<< Updated upstream
-=======
-    print(f"PDF 병합 완료: {os.path.join(path, f'{name}_merged_output_{KST}.pdf')}")
-
->>>>>>> Stashed changes
+country_list = ["Vietnam","TaiwanXiapi"]
+for country in country_list:
+    pdf_merge("C:/Users/suppo/OneDrive/Desktop/물류/NUMBUZIN_2026_02_26_1",country,1200)
