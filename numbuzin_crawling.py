@@ -60,7 +60,6 @@ numbuzin_country = {
 def pdf_merge_split(country,n_path):
     return pdf_merge(n_path,country,1200)
 
-
 def create_pickup_and_download_pdf(page, country:str) -> str:
     """
     * 한 국가당 shipping_channel 을 도는 함수
@@ -241,11 +240,10 @@ def shipping_channel_cnt(page,country:str):
         group = shipping_channel.locator("div.eds-radio-group")
         labels = group.locator("label.eds-radio-button")
         label_cnt = labels.count()
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(1000)        
         
     except TimeoutError as e:
         print(e)
-
     return labels, label_cnt
 
 
@@ -268,7 +266,7 @@ def run(country_input: list[str]) -> None:
         try:
             for country in country_input:
                 create_pickup_and_download_pdf(page, country)
-                pdf_merge(f"{APP_DIR}/NUMBUZIN_{KST}",country,1200)
+                pdf_merge(f"{APP_DIR}/NUMBUZIN_{KST}",country,"NUMBUZIN",1200)
         finally:
             context.close()
             browser.close()

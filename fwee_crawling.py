@@ -237,6 +237,7 @@ def run(country_input: list[str]) -> None:
     외부에서 호출하기 좋은 entrypoint 함수
     - Tkinter 버튼에서 run([...]) 호출하면 됨
     """
+    # 함수를 실행할 때마다 초,분을 설정해야 겹치는 파일 생성 안됨
     KST, KST_HS = make_kst()
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -251,7 +252,7 @@ def run(country_input: list[str]) -> None:
         try:
             for country in country_input:
                 create_pickup_and_download_pdf(page, country)
-                pdf_merge(f"{APP_DIR}/FWEE_{KST}",country,1200)
+                pdf_merge(f"{APP_DIR}/FWEE_{KST}",country,"FWEE",1200)
         finally:
             context.close()
             browser.close()
@@ -259,3 +260,5 @@ def run(country_input: list[str]) -> None:
 if __name__ == "__main__":
     country_input = sys.argv[1:]
     run(country_input)
+
+
