@@ -172,3 +172,10 @@ test_file
 *.json
 *.zip
 >>>>>>> Stashed changes
+fit_excel.py
+logistic_streamlit/
+pdf_print.py
+popup_test.py
+pw-browsers/
+test.py
+dist/
