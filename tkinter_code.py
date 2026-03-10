@@ -38,8 +38,8 @@ from numbuzin_crawling import run as numbuzin_run, numbuzin_country
 from fwee_crawling import run as fw_run, fwee_countrylist
 load_dotenv()
 
-LOGIN_ID = os.getenv("TKINT_ID") or "admin"
-LOGIN_PW = os.getenv("TKINT_PW") or "admin123"
+LOGIN_ID = os.getenv("TKINT_ID")
+LOGIN_PW = os.getenv("TKINT_PW") 
 
 # 데이터만 저장하는 클래스를 쉽게 만드는 것
 @dataclass
