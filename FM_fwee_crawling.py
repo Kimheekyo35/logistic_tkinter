@@ -12,10 +12,9 @@ load_dotenv()
 PLAYWRIGHT_NAV_TIMEOUT_MS = int("30000")
 PLAYWRIGHT_SELECTOR_TIMEOUT_MS = int("30000")
 
-fwee_countrylist = {
+tage_countrylist = {
     "Singapore" : "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1147332494",
     "Taiwan Xiapi" : "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1152063847",
-    "Thailand" : "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1152063845",
     "Malaysia" : "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1152063834",
     "Philippines": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1152063836",
     "Vietnam": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1152063841"
@@ -29,13 +28,13 @@ country_input = sys.argv[1:]
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=False)
-    context = browser.new_context(storage_state="fwee_shopee_state.json")
+    context = browser.new_context(storage_state="tage_shopee_state.json")
     page = context.new_page()
     page.goto("https://seller.shopee.kr/?cnsc_shop_id=1152063836",wait_until="domcontentloaded",timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
 
     try:
         for country in country_input:
-            page.goto(fwee_countrylist[country],timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
+            page.goto(tage_countrylist[country],timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
             print(f"{country} 열었음")
             page.wait_for_timeout(5000)
 
@@ -73,7 +72,7 @@ with sync_playwright() as p:
                 change_url = "/".join(url.split("/")[:7])+"/link?type=1&cnsc_shop_id="+own_number
                 return change_url
 
-            change_url = change(fwee_countrylist[country])
+            change_url = change(tage_countrylist[country])
             page.goto(change_url,wait_until="load",timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
             page.wait_for_timeout(3000)
 

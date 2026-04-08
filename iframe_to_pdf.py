@@ -1,13 +1,14 @@
 import base64
 from playwright.sync_api import Page
 from pathlib import Path
-
-def download_pdf_from_shopee_preview(page: Page, save_path: str) -> str:
-    # 1) PDF iframe이 붙을 때까지 기다리기 (blob: src)
+def download_pdf_from_shopee_preview(
+    page: Page,
+    save_path: str,
+    stable_wait_ms: int = 30000,
+) -> str:
     iframe = page.locator("iframe[type='application/pdf'][src^='blob:'], iframe[src^='blob:']").first
     iframe.wait_for(state="attached", timeout=60000)
 
-    # 2) iframe src가 blob:로 채워질 때까지 대기
     page.wait_for_function("""
       () => {
         const f = document.querySelector("iframe[src^='blob:']");
@@ -15,7 +16,9 @@ def download_pdf_from_shopee_preview(page: Page, save_path: str) -> str:
       }
     """, timeout=60000)
 
-    # 3) blob PDF를 fetch해서 base64로 반환
+    # PDF가 떠도 추가 안정화 대기
+    page.wait_for_timeout(stable_wait_ms)
+
     js = r"""
     async () => {
       const f = document.querySelector("iframe[src^='blob:']");
@@ -34,21 +37,19 @@ def download_pdf_from_shopee_preview(page: Page, save_path: str) -> str:
       for (let i = 0; i < bytes.length; i += chunkSize) {
         binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
       }
-      const b64 = btoa(binary);
 
-      return { b64, type: blob.type || "", size: blob.size };
+      return {
+        b64: btoa(binary),
+        type: blob.type || "",
+        size: blob.size
+      };
     }
     """
 
     result = page.evaluate(js)
 
-    if result.get("type") and "pdf" not in result["type"]:
-        pass
-
     out = Path(save_path)
-    # 상위 폴더 없으면 생성
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(base64.b64decode(result["b64"]))
 
     return str(out)
-

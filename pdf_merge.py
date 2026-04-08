@@ -1,26 +1,41 @@
-from PyPDF2 import PdfReader, PdfWriter
 from pathlib import Path
 import re
 
+from PyPDF2 import PdfReader, PdfWriter
 
-def pdf_merge(folder_path:str, country:str, chunk_pages: int = 1200):
+
+def _build_source_pdf_pattern(country: str) -> re.Pattern:
+    prefixes = [
+        "NUMBUZIN",
+        "FWEE",
+        "TAGE",
+    ]
+    prefix_group = "|".join(re.escape(prefix) for prefix in prefixes)
+    return re.compile(
+        rf"^(?:{prefix_group})_{re.escape(country)}_\d{{4}}_\d{{2}}_\d{{2}}_\d+\.pdf$",
+        re.IGNORECASE,
+    )
+
+
+def pdf_merge(folder_path: str, country: str, chunk_pages: int = 1200):
     folder = Path(folder_path)
     folder.mkdir(parents=True, exist_ok=True)
 
-    # numbuzin_{country}_YYYY_MM_DD_HHMMSS.pdf 에 맞는 것만
-    pattern = re.compile(rf"^NUMBUZIN_{re.escape(country)}_\d{{4}}_\d{{2}}_\d{{2}}_\d+\.pdf$", re.IGNORECASE)
-
-    pdfs = sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and pattern.match(p.name)])
+    pattern = _build_source_pdf_pattern(country)
+    pdfs = sorted(
+        p
+        for p in folder.iterdir()
+        if p.is_file() and p.suffix.lower() == ".pdf" and pattern.match(p.name)
+    )
 
     if not pdfs:
-            print(f"[{country}] 병합할 PDF가 없습니다: {folder}")
-            return
+        print(f"[{country}] 병합할 PDF가 없습니다: {folder}")
+        return
 
     writer = PdfWriter()
     part = 1
     page_count = 0
-
-    base_folder_name = folder.name  # 예: NUMBUZIN_2026_02_25
+    base_folder_name = folder.name
 
     def flush():
         nonlocal writer, part, page_count
@@ -42,9 +57,5 @@ def pdf_merge(folder_path:str, country:str, chunk_pages: int = 1200):
 
     if page_count > 0:
         flush()
-    
-    return (f"{country}_병합 완료")
 
-country_list = ["Vietnam","TaiwanXiapi"]
-for country in country_list:
-    pdf_merge("C:/Users/suppo/OneDrive/Desktop/물류/NUMBUZIN_2026_02_26_1",country,1200)
+    return f"{country}_병합 완료"
