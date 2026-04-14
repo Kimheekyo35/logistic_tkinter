@@ -247,7 +247,7 @@ def create_pickup_and_download_pdf(
 
             dropdown = page.locator("div.eds-popper-container").last
             dropdown.wait_for(state="attached", timeout=10000)
-            item = dropdown.locator("ul > li").nth(1)
+            item = dropdown.locator("ul > li").first
             item.wait_for(state="visible", timeout=10000)
 
             with page.expect_popup(timeout=5000) as popup_info:
