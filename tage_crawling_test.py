@@ -33,11 +33,12 @@ json_path = APP_DIR / "tage_shopee_state.json"
 
 
 tage_countrylist = {
-    "Taiwan Xiapi": "https://seller.shopee.kr/portal/sale/mass/ship?cnsc_shop_id=1010596085&mass_shipment_tab=201&filter.shipping_method=38064&filter.order_item_filter_type=item0&filter.order_process_status=1&filter.sort.sort_type=2&filter.sort.ascending=true&filter.pre_order=2&filter.shipping_urgency_filter.current_time=1775521325&filter.shipping_urgency_filter.shipping_urgency=1",
+    # "Taiwan Xiapi": "https://seller.shopee.kr/portal/sale/mass/ship?cnsc_shop_id=1010596085&mass_shipment_tab=201&filter.shipping_method=38064&filter.order_item_filter_type=item0&filter.order_process_status=1&filter.sort.sort_type=2&filter.sort.ascending=true&filter.pre_order=2&filter.shipping_urgency_filter.current_time=1775521325&filter.shipping_urgency_filter.shipping_urgency=1",
     # "Malaysia": "https://seller.shopee.kr/portal/sale/mass/ship?cnsc_shop_id=1010596074&mass_shipment_tab=201&filter.shipping_method=28050&filter.order_item_filter_type=item0&filter.order_process_status=1&filter.sort.sort_type=2&filter.sort.ascending=true&filter.pre_order=2&filter.shipping_urgency_filter.current_time=1775521370&filter.shipping_urgency_filter.shipping_urgency=1",
+    "Philippines": "https://seller.shopee.kr/portal/sale/mass/ship?cnsc_shop_id=1010596078&mass_shipment_tab=201&filter.shipping_method=48005&filter.order_item_filter_type=item0&filter.order_process_status=1&filter.sort.sort_type=2&filter.sort.ascending=true&filter.pre_order=2&filter.shipping_urgency_filter.current_time=1778027418&filter.shipping_urgency_filter.shipping_urgency=1"
 }
 
-DEFAULT_TEST_COUNTRIES = ["Taiwan Xiapi"]
+DEFAULT_TEST_COUNTRIES = ["Philippines"]
 
 
 def resolve_json_path() -> Path:

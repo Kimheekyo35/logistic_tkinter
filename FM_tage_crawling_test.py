@@ -29,8 +29,9 @@ PLAYWRIGHT_NAV_TIMEOUT_MS = 30000
 PLAYWRIGHT_SELECTOR_TIMEOUT_MS = 30000
 
 TAGE_COUNTRYLIST = {
-    "Taiwan Xiapi": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1010596085",
-    "Malaysia": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1010596074",
+    # "Taiwan Xiapi": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1010596085",
+    # "Malaysia": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1010596074",
+    "Philippines": "https://seller.shopee.kr/portal/sale/order/pre-declare/generate?cnsc_shop_id=1010596078"
 }
 
 
