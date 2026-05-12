@@ -178,9 +178,38 @@ def create_pickup_and_download_pdf(page, country:str) -> str:
                         page.wait_for_timeout(5000)
                         
                     # generate 버튼 누르기
-                    generate_btn =another_win.locator("button:has-text('Generate')").first
+                    generate_btn = another_win.locator(
+                        "div.record-item-download.generate button"
+                    ).first
                     generate_btn.wait_for(state="visible", timeout=PLAYWRIGHT_NAV_TIMEOUT_MS)
-                    generate_btn.click()
+                    generate_btn.scroll_into_view_if_needed(timeout=5000)
+
+                    # 버튼이 활성화될 때까지 대기 (최대 30초)
+                    for _ in range(30):
+                        if generate_btn.is_enabled():
+                            break
+                        page.wait_for_timeout(1000)
+
+                    # 클릭 재시도: 일반 → force → JS 강제 클릭
+                    last_err = None
+                    clicked = False
+                    for attempt in range(5):
+                        try:
+                            try:
+                                generate_btn.click(timeout=5000)
+                            except Exception:
+                                generate_btn.click(force=True, timeout=3000)
+                            clicked = True
+                            break
+                        except Exception as e:
+                            last_err = e
+                            print(f"Generate 클릭 재시도 {attempt + 1}/5: {e}")
+                            page.wait_for_timeout(1500)
+
+                    if not clicked:
+                        print(f"Generate JS 강제 클릭 (직전 에러: {last_err})")
+                        generate_btn.evaluate("el => el.click()")
+
                     print(f"{country} Generate 클릭했음")
                     page.wait_for_timeout(3000)
 
